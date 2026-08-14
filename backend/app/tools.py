@@ -41,6 +41,10 @@ TOOLS = [
                 "Call this when you have enough information to summarise the "
                 "competitor. This ends the research - only call it once."
             ),
+            # No pages_visited field here on purpose: that list is tracked server-side
+            # in agent.py from real tool results, not taken on the model's word (found
+            # by testing - the model would list a URL as "visited" even when the fetch
+            # had failed or redirected somewhere unrelated).
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -61,30 +65,27 @@ TOOLS = [
                         "items": {"type": "string"},
                         "description": "3-5 short, concrete observations (features, positioning, target audience).",
                     },
-                    "pages_visited": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Every URL you actually fetched during research.",
-                    },
                 },
-                "required": ["summary", "pricing_summary", "key_findings", "pages_visited"],
+                "required": ["summary", "pricing_summary", "key_findings"],
             },
         },
     },
 ]
 
 
-def run_tool(name: str, arguments: dict) -> str:
-    """Execute a tool call and return its result as a string for the model to read.
+def run_tool(name: str, arguments: dict) -> tuple[str, str | None]:
+    """Execute a tool call.
 
-    Errors are returned as text (not raised) so the agent loop can see "that
-    failed" and decide what to do next, the same failure-handling shape as
-    browser.py's PageResult.error.
+    Returns (text for the model to read, url actually fetched or None). The second
+    value is how agent.py builds its own ground-truth list of visited pages instead
+    of trusting whatever the model later claims in pages_visited - errors are
+    returned as text (not raised) so the agent loop can see "that failed" and decide
+    what to do next, the same failure-handling shape as browser.py's PageResult.error.
     """
     if name == "fetch_page":
         result = browser.fetch_page(arguments["url"])
         if not result.ok:
-            return f"ERROR fetching {arguments['url']}: {result.error}"
-        return f"Title: {result.title}\n\n{result.text}"
+            return f"ERROR fetching {arguments['url']}: {result.error}", None
+        return f"Title: {result.title}\n\n{result.text}", arguments["url"]
 
-    return f"ERROR: unknown tool '{name}'"
+    return f"ERROR: unknown tool '{name}'", None

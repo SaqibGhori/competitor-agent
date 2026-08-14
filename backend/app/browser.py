@@ -12,12 +12,14 @@ would often return an empty shell.
 
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 
 SCREENSHOT_DIR = Path(__file__).resolve().parent.parent / "data" / "screenshots"
 NAV_TIMEOUT_MS = 20_000
 MAX_TEXT_CHARS = 15_000  # keep individual pages from blowing out the LLM context
+MIN_TEXT_CHARS = 30  # below this, treat the page as having no real content
 
 
 @dataclass
@@ -39,6 +41,15 @@ def fetch_page(url: str, screenshot: bool = True) -> PageResult:
     Failures (bad URL, timeout, site blocks bots) are returned as a PageResult with
     `error` set rather than raised - the agent loop needs to see and reason about a
     failed fetch ("this page doesn't exist, try a different URL") rather than crash.
+
+    Two failure modes found by testing against real sites (facebook.com/plans,
+    facebook.com/pricing) are treated as errors rather than quiet successes, because
+    a "successful" fetch that actually taught the agent nothing is worse than an
+    honest failure - the agent would otherwise report a page as "visited" when it
+    read either nothing or a different site entirely:
+    - The page redirected to a different domain (guessed URLs like "/pricing" often
+      land on an unrelated site rather than a real 404).
+    - The page loaded but rendered no real text (JS-only content, a bot wall).
     """
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -49,8 +60,24 @@ def fetch_page(url: str, screenshot: bool = True) -> PageResult:
             page.goto(url, timeout=NAV_TIMEOUT_MS, wait_until="domcontentloaded")
             page.wait_for_timeout(1000)  # let client-side rendering settle
 
+            requested_host = urlparse(url).netloc.removeprefix("www.")
+            final_host = urlparse(page.url).netloc.removeprefix("www.")
+            if requested_host and final_host and requested_host != final_host:
+                browser.close()
+                return PageResult(
+                    url=url, title="", text="", screenshot_path=None,
+                    error=f"Redirected away to a different site ({page.url}) - this is not {requested_host}'s content.",
+                )
+
             title = page.title()
             text = page.inner_text("body")[:MAX_TEXT_CHARS]
+
+            if len(text.strip()) < MIN_TEXT_CHARS:
+                browser.close()
+                return PageResult(
+                    url=url, title=title, text="", screenshot_path=None,
+                    error="Page loaded but had no readable text (likely JS-only content or a bot wall).",
+                )
 
             screenshot_path = None
             if screenshot:

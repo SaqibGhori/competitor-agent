@@ -67,6 +67,12 @@ def research(url: str) -> Report:
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": f"Research this competitor: {url}"},
     ]
+    # The model self-reports pages_visited when it calls finish_report, but a model's
+    # account of its own actions is exactly the kind of claim this project series
+    # doesn't take on trust (see Project 2's citation verification) - it could list a
+    # URL it never actually fetched, or one that errored. Tracked here from the real
+    # tool results instead, and substituted for whatever the model claims.
+    fetched_urls: list[str] = []
 
     for step in range(MAX_STEPS):
         msg = None
@@ -106,10 +112,12 @@ def research(url: str) -> Report:
                     summary=args["summary"],
                     pricing_summary=args["pricing_summary"],
                     key_findings=args["key_findings"],
-                    pages_visited=args["pages_visited"],
+                    pages_visited=fetched_urls,  # verified, not the model's claim
                 )
 
-            result = tools.run_tool(name, args)
+            result, fetched_url = tools.run_tool(name, args)
+            if fetched_url:
+                fetched_urls.append(fetched_url)
             messages.append({
                 "role": "tool",
                 "tool_call_id": call.id,
