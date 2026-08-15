@@ -49,14 +49,17 @@ def _to_message_dict(msg) -> dict:
     """Convert the SDK's message object into a plain dict we can append to history."""
     d = {"role": "assistant", "content": msg.content}
     if msg.tool_calls:
-        d["tool_calls"] = [
-            {
+        d["tool_calls"] = []
+        for tc in msg.tool_calls:
+            call = {
                 "id": tc.id,
                 "type": "function",
                 "function": {"name": tc.function.name, "arguments": tc.function.arguments},
             }
-            for tc in msg.tool_calls
-        ]
+            extra = getattr(tc, "extra_content", None)
+            if extra:
+                call["extra_content"] = extra
+            d["tool_calls"].append(call)
     return d
 
 
